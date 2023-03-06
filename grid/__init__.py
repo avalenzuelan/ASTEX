@@ -1,2 +1,2 @@
 # __init__.py
-from .modules import Grid
+from .modules import Grid, ArtificialStars

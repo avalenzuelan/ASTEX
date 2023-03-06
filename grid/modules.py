@@ -1,5 +1,6 @@
 # This file contains classes that generates for the completeness tests
 from astropy.io import fits
+import pandas as pd
 import numpy as np
 
 class Grid():
@@ -16,7 +17,8 @@ class Grid():
         self.header = self._open_header(self.path_to_image,
                                    ext = self.extention)
         self.imsize = self._get_imsize()
-        self.nartstars = 0
+        self.nartstars_pergrid = 0
+        self.stars_pos = None
 
     def _open_image(self, path_to_image, ext = 0):
         hdulist = fits.open(path_to_image)
@@ -28,6 +30,11 @@ class Grid():
     
     def _get_imsize(self):
         return self.header['NAXIS1'], self.header['NAXIS2']
+    
+    def _create_stars_pos(self, x, y):
+        coords = np.stack((x,y), axis = 1)
+        self.stars_pos = coords 
+        return coords
 
     def get_image(self):
         return self.image
@@ -35,7 +42,7 @@ class Grid():
     def get_header(self):
         return self.header
     
-    def create_grid(self, psf=float, dist=int, hexshape=True):
+    def create_grid(self, psf=float, dist=2, hexshape=True):
         """ This method creates the grid. By default, the grid is hexagonal,
         but can be square if hexshape == False. This part of the code is based 
         the fortran code 'crowding.for' provided by Manuela."""
@@ -55,7 +62,7 @@ class Grid():
         nx = int((xmax - xr) // (dist*psf))
         ny = int((ymax - yr) // (dist*psf))
 
-        
+        #this command creates the grid given the input parameters
         xv, yv = np.meshgrid(np.arange(0,xmax, xmax/nx), 
                              np.arange(0,ymax, ymax/ny), 
                              sparse=False, indexing='xy')
@@ -68,7 +75,27 @@ class Grid():
         mask = mask_border(psf, xmax, ymax)
         xv, yv = xv[mask], yv[mask]
 
-        self.nartstars = len(xv)
+        self.nartstars_pergrid = len(xv)
+        self._create_stars_pos(xv, yv)
         return xv, yv
-
     
+class ArtificialStars():
+
+    def __init__(self, grid, path_to_magfile):
+        
+        self.grid = grid
+        self.magfile = self._open_magfile(path_to_magfile)
+
+    def _open_magfile(self, path_to_magfile):
+        df = pd.read_csv(path_to_magfile,
+                         skiprows = [0,1,2],
+                         delim_whitespace = True,
+                         usecols = [3, 13],
+                         names = ['H', 'Ks'])
+        return df
+
+    def get_magfile(self):
+        return self.magfile
+    
+    def create_pos_files(self, magfile, band):
+        return

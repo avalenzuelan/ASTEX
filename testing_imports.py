@@ -1,5 +1,18 @@
-from grid import Grid
+from grid import Grid, ArtificialStars
+import matplotlib.pyplot as plt
 
-hexgrid = Grid(path_to_image='Data/NPL054/blank_fits.fits')
+def main():
+   hexgrid = Grid(path_to_image='Data/NPL054/blank_fits.fits')
+   xv, yv =  hexgrid.create_grid(20, 2)
+   print('Each grid supports %i stars' % hexgrid.nartstars_pergrid)
 
-print(hexgrid.get_image())
+   fig, ax = plt.subplots(figsize=(8, 8))
+   ax.scatter(xv, yv, s=1)
+   ax.axis('equal')
+   plt.show()
+
+   artstars = ArtificialStars(hexgrid, 'Data/NPL054/NPL054_c1.dat.rot')
+   print(artstars.get_magfile())
+
+if __name__ == '__main__':
+   main()
