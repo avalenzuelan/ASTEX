@@ -7,10 +7,10 @@ def main():
    xv, yv =  hexgrid.create_grid(20, 2)
    print('Each grid supports %i stars' % hexgrid.nartstars_pergrid)
 
-   fig, ax = plt.subplots(figsize=(8, 8))
-   ax.scatter(xv, yv, s=1)
-   ax.axis('equal')
-   plt.show()
+#    fig, ax = plt.subplots(figsize=(8, 8))
+#    ax.scatter(xv, yv, s=1)
+#    ax.axis('equal')
+#    plt.show()
 
    artstars = ArtificialStars(hexgrid, 'Data/NPL054/NPL054_c1.dat.rot')
    print(artstars.magfile)

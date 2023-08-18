@@ -18,6 +18,7 @@ class Grid():
                                    ext = self.extention)
         self.imsize = self._get_imsize()
         self._nartstars_pergrid = None
+        self.original_stars_pos = None
         self.stars_pos = None
 
     def _open_image(self, path_to_image, ext = 0):
@@ -37,9 +38,8 @@ class Grid():
     
     def _create_stars_pos(self, x, y):
         coords = np.stack((x,y), axis = 1)
-        self.stars_pos = coords 
+        self.original_stars_pos = coords 
         return coords
-    
 
     @property
     def image(self):
@@ -52,7 +52,16 @@ class Grid():
     def create_grid(self, psf=float, dist=2, hexshape=True):
         """ This method creates the grid. By default, the grid is hexagonal,
         but can be square if hexshape == False. This part of the code is based 
-        the fortran code 'crowding.for' provided by Manuela."""
+        the fortran code 'crowding.for' provided by Manuela.
+        
+        psf: float, the size of the psf fitting radius in pixels used in DAOPHOT
+        photometry. This is used to avoid placing stars too close to each other.
+
+        dist: float, the distance between the centers of the hexagons in pixels.
+
+        hexshape: bool, if True, the grid is hexagonal, if False, the grid is
+        square.
+        """
 
         def mask_border(psf, xmax, ymax):
             """ This subroutine creates a mask that eliminates stars that are
@@ -86,11 +95,22 @@ class Grid():
         self._create_stars_pos(xv, yv)
         return xv, yv
     
-    def move_random_1px(self)
+    def move_random_1px(self):
         """ This method moves each position randomly within one pixel, to
         ensure that the completeness of one position is not bias because 
         a star falls in exacly the same position of the pixel each time"""
-        return    
+
+        #TBD - this method should be improved to move the stars within a
+        #radius of 1 pixel, not just 1 pixel in each direction
+
+        #Create a copy of the original positions
+        self.stars_pos = self.original_stars_pos.copy()
+
+        #Move the positions randomly within one pixel
+        self.stars_pos[:,0] += np.random.uniform(-0.5,0.5, len(self.stars_pos))
+        self.stars_pos[:,1] += np.random.uniform(-0.5,0.5, len(self.stars_pos))  
+        return self.stars_pos
+    
 class ArtificialStars():
 
     def __init__(self, grid, path_to_magfile, random_mags = False):
@@ -120,17 +140,41 @@ class ArtificialStars():
         #in the grid. Flat random? or with a slope?
         return
 
-    def separate_magfile(self, grid):
+    def separate_magfile(self, Grid):
+
         """ This method is used to split the magnitudes files in lenghts 
         equal to the lengths of the grid. This recieves as an input the grid
-        object, and returns a list of N dataframes ready to be merged with the
+        object, and returns a list of N files ready to be merged with the
         positions on each iteration """
 
-        nstars_grid = grid.nartstars_pergrid
+        nstars_grid = Grid.nartstars_pergrid
         nstars = len(self.magfile)
         n_grids = nstars // nstars_grid
-        print(n_grids)
-        return
+        n_leftover_stars = nstars % nstars_grid
+        print(nstars, n_grids, n_leftover_stars)
 
-    def create_pos_files(self, magfile, band):
+        for i in range(n_grids):
+            if i == 0:
+                df = self.magfile.iloc[:nstars_grid]
+                df.to_csv('test_files/magfile_%i.dat' % (i+1), sep = ' ', index = False,
+                          float_format='%.3f',)
+            else:
+                df = self.magfile.iloc[i*nstars_grid:(i+1)*nstars_grid]
+                df.to_csv('test_files/magfile_%i.dat' % (i+1), sep = ' ', index = False,
+                          float_format='%.3f',)
+        
+        #This part of the code creates a file with the leftover stars
+        df = self.magfile.iloc[-n_leftover_stars:]
+        df.to_csv('test_files/magfile_%i.dat' % (n_grids+1), sep = ' ', index = False,
+                            float_format='%.3f',)
+
+        return True
+
+    def create_addstar_files(self, magfile, band):
+        """ This method creates the addstar files for each grid. This method
+        recieves as an input the magfile created by the separate_magfile method
+        and the band to be used (H or Ks for HAWK-I fields)"""
+
+        
+
         return
