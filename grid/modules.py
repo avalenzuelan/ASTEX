@@ -189,7 +189,8 @@ class ArtificialStars():
     def create_addstar_files(self, Grid, band, magfolder = '.',
                              addstarfolder = '.',
                              magfile = 'magfile', addstarfile = 'addstar',
-                             shuffle_mags = True):
+                             shuffle_mags = True,
+                             remove_previous_files = False):
         """ This method creates the addstar files for each grid. This method
         recieves as an input the magfile created by the separate_magfile method
         and the band to be used (H or Ks for HAWK-I fields)
@@ -198,6 +199,8 @@ class ArtificialStars():
         magnitudes of the stars in the grid. It reads each file in the magfolder
         and assigns a magnitude to each position.
         """
+        if remove_previous_files:
+            os.system('rm %s/%s*' % (addstarfolder, addstarfile))
 
         hexgrid = Grid
         #I need to sort the files in the magfolder, because the last file is
@@ -225,15 +228,42 @@ class ArtificialStars():
         
         return True
     
-    def create_addstar_fits(self, fits_file):
+    def create_fits_artstars(self, path_to_folder, fits_file,
+                             n_file = 0, 
+                             addstarfolder = '.',
+                             addstarfile = '',
+                             phots_per_adu = 1):
         """
         This method creates the fits files using the addstar files created
         by the create_addstar_files method. It uses DAOPHOT's addstar command
         to create the fits files.
 
-        fits_file: string, path to the fits file where the stars will be added
+        - fits_file: string, path to the fits file where the stars will be added
+        - phots_per_adu: float, the number of photons per adu in the image. This
+        is used to estimate the Poisson noise in the artificial stars. Can be
+        calculated as GAIN/QE, where GAIN is the gain of the detector and QE
+        is the quantum efficiency of the detector. If you want the artificial
+        stars to not have any noise, set this to a very high number, like 99_999
+        
         """
+        origin_path = os.getcwd()
+        dirpath = os.path.dirname(path_to_folder)
 
-        #TBD - this method should be improved to create the fits files using
-        #the addstar command from DAOPHOT
+        # To run daophot, I need to change to the directory where the fits file
+        # and psf file are located
+        os.chdir(dirpath)
+        filepath = os.path.splitext(fits_file)[0]
+
+        path_to_addstar = os.path.join(addstarfolder, addstarfile)
+
+        psf_filepath = filepath + '.psf'
+        new_filepath = filepath + '_add' + str(n_file) + '.fits'
+        cmd_addstar = 'daophot << EOF\n\nat %s\naddstar\n%s\n100\n%1.2f\n%s\n%s\nEOF\n' \
+            % (filepath, psf_filepath, phots_per_adu, path_to_addstar, \
+               new_filepath)
+        print(cmd_addstar)
+        os.system(cmd_addstar)
+
+        #Return to the original directory
+        os.chdir(origin_path)
         return True
