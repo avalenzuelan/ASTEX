@@ -5,20 +5,46 @@ import numpy as np
 import re
 import os
 
-class Grid():
-    """ This class creates the grid to place the artificial stars.
+class Grids():
+
+    """ 
+
+    This class creates the grid to place the artificial stars.
     The positions are given in pixels. This class creates the positions with
-    in pixels based on the specifications of each *.fits image"""
+    in pixels based on the specifications of a *.fits image
+    
+    Then, it uses a *.mch file to transform the positions from pixels to the
+    coordinate system of another image. This is done using the transformation
+    matrix provided by DAOMATCH/DAOMASTER. This class also creates the grid in 
+    the coordinate system of the other image.
 
-    def __init__(self, path_to_image, extention = 0):
+    """
 
-        self.path_to_image = path_to_image
+    def __init__(self, 
+                 path_to_folder : str, 
+                 master_filename: str,
+                 list_of_filenames = [],
+                 mch_filename = None,
+                 extention = 0):
+
+        self.path_to_folder = path_to_folder
+        self.filename = master_filename
+        self.path_to_image = os.path.join(path_to_folder, 
+                                          master_filename + '.fits')
         self.extention = extention
         self._image = self._open_image(self.path_to_image,
                                       ext = self.extention)
         self._header = self._open_header(self.path_to_image,
                                    ext = self.extention)
         self.imsize = self._get_imsize()
+        self.list_of_filenames = list_of_filenames
+        self.list_of_paths = [os.path.join(path_to_folder, filename) \
+                                for filename in self.list_of_filenames]
+        self.mch_filename = mch_filename
+        self.mch_path = os.path.join(path_to_folder, self.mch_filename)
+        self.mch = self._read_mch()
+
+        #output attributes
         self._nartstars_pergrid = None
         self.original_stars_pos = None
         self.stars_pos = None
@@ -26,7 +52,7 @@ class Grid():
     def _open_image(self, path_to_image, ext = 0):
         hdulist = fits.open(path_to_image)
         return hdulist[ext].data
-    
+
     def _open_header(self, path_to_image, ext = 0):
         hdulist = fits.open(path_to_image)
         return hdulist[ext].header
@@ -40,18 +66,38 @@ class Grid():
     
     def _create_stars_pos(self, x, y):
         coords = np.stack((x,y), axis = 1)
+        self.stars_pos = {self.filename : coords}
         self.original_stars_pos = coords 
         return coords
+    
+    def _read_mch(self, 
+                  path_to_mch = None):
+        
+        if path_to_mch is None:
+            path_to_mch = self.mch_path
+
+        #read the mch file, edit the index, and rename the columns
+        mch = pd.read_csv(path_to_mch, delim_whitespace=True, header=None)
+        mch.drop(1, axis=1, inplace=True)
+        mch[0] = mch[0].apply(lambda x: x[1:-4])
+        mch.columns = ['FILE', 'A', 'B', 'C', 'D', 'E', 'F', 'IDK1', 'IDK2']
+        mch.set_index('FILE', inplace=True)
+
+        return mch
 
     @property
-    def image(self):
+    def imavie(self):
         return self._image
     
     @property
     def header(self):
         return self._header
     
-    def create_grid(self, psf=float, dist=2, hexshape=True):
+    def create_grid(self, 
+                    psf : float, 
+                    dist = 2, 
+                    hexshape = True):
+        
         """ This method creates the grid. By default, the grid is hexagonal,
         but can be square if hexshape == False. This part of the code is based 
         the fortran code 'crowding.for' provided by Manuela.
@@ -59,7 +105,8 @@ class Grid():
         psf: float, the size of the psf fitting radius in pixels used in DAOPHOT
         photometry. This is used to avoid placing stars too close to each other.
 
-        dist: float, the distance between the centers of the hexagons in pixels.
+        dist: float, times the distance between the centers of the hexagons in 
+        pixels.
 
         hexshape: bool, if True, the grid is hexagonal, if False, the grid is
         square.
@@ -108,45 +155,204 @@ class Grid():
         #Create a copy of the original positions
         if seed is not None:
             np.random.seed(seed)
-        self.stars_pos = self.original_stars_pos.copy()
+
+        stars_pos = self.original_stars_pos.copy()
 
         #Move the positions randomly within one pixel
-        self.stars_pos[:,0] += np.random.uniform(-0.5,0.5, len(self.stars_pos))
-        self.stars_pos[:,1] += np.random.uniform(-0.5,0.5, len(self.stars_pos))  
-        return self.stars_pos
+        stars_pos[:,0] += np.random.uniform(-0.5,0.5, len(stars_pos))
+        stars_pos[:,1] += np.random.uniform(-0.5,0.5, len(stars_pos))
+
+        self.stars_pos[self.filename] = stars_pos 
+        return stars_pos
     
+    def transform_to(self, 
+                     to_filename : str):
+
+        """ This method transforms the positions in pixels to positions in
+        the coordinate of other image. This method recieves as an input the 
+        mch file, which contains the transformation matrix from pixels to 
+        privided by DAOMATCH. This method returns a file with the positions 
+        in the new reference frame """
+
+        mch = self.mch
+
+        #name the constants and prepare the arrays
+        mch_row = mch.loc[to_filename]
+        a, b, c, d, e, f = mch_row['A'], mch_row['B'], mch_row['C'], \
+            mch_row['D'], mch_row['E'], mch_row['F']
+        xv = self.stars_pos[self.filename][:,0] 
+        yv = self.stars_pos[self.filename][:,1]
+        #transform the positions by solving the system of equations
+        # Ax = b
+
+        A = np.array([[c, e], [d, f]])
+        b = np.array([xv - a, yv - b])
+        x_new, y_new = np.linalg.solve(A, b)
+
+        #save the new positions in the dictionary
+        self.stars_pos[to_filename] = np.stack((x_new, y_new), axis = 1)
+        return x_new, y_new
+
+class Magnitudes():
+
+    """ This class reads the photometry catalogue, read its ID column and
+    goes to the .alf files to get the instrumental magnitudes of each star.
+    This class returns a file with the ID and instrumental magnitudes of each
+    star in the photometry catalogue on each alf file. It assumes that the 
+    first column in the photometry catalogue is the ID column. """
+
+    def __init__(self,
+                 path_to_folder : str,
+                 phot_cat_name : str,
+                 master_filename : str,
+                 list_of_filenames : list) -> None:
+        
+        self.path_to_folder = path_to_folder
+        self.phot_catalogue_name = phot_cat_name
+        self.path_to_phot_cat = os.path.join(path_to_folder, phot_cat_name)
+        self.master_filename = master_filename
+        self.filenames = list_of_filenames.copy()
+        self.filenames.insert(0, self.master_filename)
+        self.alf_names = [filename + '.alf' for filename in self.filenames]
+        self.path_to_alfs = [os.path.join(path_to_folder, alf_name) \
+                                for alf_name in self.alf_names]
+        self.phot_cat = None
+
+    def open_phot_catalogue(self, skiprows = []):
+        df = pd.read_csv(self.path_to_phot_cat, 
+                         delim_whitespace=True,
+                         skiprows=skiprows,
+                         usecols=[0])
+        df.columns = ['ID']
+        df.set_index('ID', inplace=True)
+        self.phot_cat = df
+        return df
+    
+    def get_instrumental_magnitudes(self, 
+                                    filename : str,
+                                    mag_name = 'MAG'):
+        
+        names = ['ID', 'X', 'Y', 'MAG', 'eMAG', 'SKY', 'ITER', 'CHI', 'SHARP']  
+        
+        for alf in self.path_to_alfs:
+            if filename in alf:
+                alf_mag = pd.read_csv(alf, 
+                                      delim_whitespace=True, 
+                                      names=names,
+                                      skiprows=2,
+                                      usecols=['ID', 'MAG'])
+                alf_mag.set_index('ID', inplace=True)
+                alf_mag.rename(columns={'MAG': mag_name}, inplace=True)
+                self.phot_cat = self.phot_cat.join(alf_mag, on='ID', how='left')
+        
+        return alf_mag
+    
+    def save_magfile(self, 
+                     filename = 'magfile.dat',
+                     path_to_save = None):
+        
+        if path_to_save is None:
+            path_to_save = self.path_to_folder
+
+        path_to_save = os.path.join(path_to_save, filename)
+        self.phot_cat.to_csv(path_to_save, sep = '\t', index = True,
+                             float_format='%.3f', header = True,
+                             na_rep=99.999)
+        return True
+
 class ArtificialStars():
 
-    def __init__(self, grid, path_to_magfile, random_mags = False):
+    def __init__(self, 
+                 grid : Grids, 
+                 path_to_folder : str,
+                 mag_filename : str | None = None, 
+                 random_mags : bool = False):
         
         self.grid = grid
-        self._magfile = self._open_magfile(path_to_magfile)
+
+        if mag_filename is None or random_mags:
+            self.path_to_magfile = None
+            self.magfile = None
+            random_mags = True
+        else:
+            self.path_to_magfile = os.path.join(path_to_folder, mag_filename)
+            self.magfile = self._open_magfile(self.path_to_magfile) 
+
+        self.n_grids = None
+        self.n_leftover_stars = None  
+        self.list_of_addfits = []
 
     def _open_magfile(self, path_to_magfile):
         df = pd.read_csv(path_to_magfile,
-                         skiprows = [0,1,2],
                          delim_whitespace = True,
-                         usecols = [3, 13],
-                         names = ['H', 'Ks'])
+                         header=0,
+                         index_col=0)
         return df
 
-    @property
-    def magfile(self):
-        return self._magfile
     
-    @magfile.setter
-    def magfile(self, value):
-        #do something
-        return self._magfile
-    
-    def random_magnitudes(self, min_mag, max_mag):
-        #TBD - create random magnitudes with length uequal to the number of stars
-        #in the grid. Flat random? or with a slope?
-        return
+    def random_magnitudes(self, 
+                          min_mag : int | float,
+                          max_mag : int | float,
+                          red_band : str,
+                          blue_band : str = None, 
+                          color_range: tuple | list | None = None):
 
-    def separate_magfile(self, Grid, magfolder = '.', magfile = 'magfile',
-                         use_leftover_stars = False,
-                         remove_previous_files = False):
+        '''
+        This method creates random magnitudes for the stars in the grid. The
+        magnitudes are created with a flat distribution between min_mag and
+        max_mag. The number of stars is equal to the number of stars in the grid
+
+        Parameters
+        ----------
+        min_mag: int or float
+            The minimum magnitude of the stars
+        max_mag: int or float 
+            The maximum magnitude of the stars
+        color_range: tuple or list, default None 
+            The range of colors of the stars. If None, the
+            stars are created with a flat distribution of colors. If not None, the
+            stars are created to be within a region of the color-magnitude diagram, 
+            where the magnitude defined by min_mag and max_mag is the color of the
+            redder magnitude. The color_range is a tuple with the minimum and
+            maximum colors of the stars.
+
+        Returns
+        -------
+        Pandas DataFrame 
+            A DataFrame with the magnitudes of the stars. If color_range is
+            not None, the DataFrame has three columns, one for each magnitude and 
+            one for the color of the stars.
+        '''
+        if blue_band is None and color_range is not None:
+            raise ValueError('If color_range is not None, blue_band must be defined')
+        
+        nstars = self.grid.nartstars_pergrid
+
+        if color_range is None:
+            mags = np.random.uniform(min_mag, max_mag, nstars)
+            if self.magfile is None:
+                self.magfile = pd.DataFrame(mags, columns = [red_band])
+            else:
+                self.magfile[red_band] = mags
+
+        elif color_range is not None:
+            mags_min = [color_range[0], min_mag]
+            mags_max = [color_range[1], max_mag]
+            mags = np.random.uniform(mags_min, mags_max, size=(nstars,2))
+            if self.magfile is None:
+                self.magfile = pd.DataFrame(mags, columns = ['COLOR', red_band])
+            else:
+                self.magfile[['COLOR', red_band]] = mags
+            self.magfile[blue_band] = self.magfile['COLOR'] + self.magfile[red_band]
+            self.magfile.drop('COLOR', axis=1, inplace=True)
+
+        return self.magfile
+
+    def separate_magfile(self, 
+                         magfolder : str = '.', 
+                         magfile : str = 'magfile',
+                         use_leftover_stars : bool = False,
+                         remove_previous_files : bool = False):
 
         """ This method is used to split the magnitudes files in lenghts 
         equal to the lengths of the grid. This recieves as an input the grid
@@ -156,10 +362,14 @@ class ArtificialStars():
         if remove_previous_files:
             os.system('rm %s/%s*' % (magfolder, magfile))   
         
-        nstars_grid = Grid.nartstars_pergrid
+        nstars_grid = self.grid.nartstars_pergrid
         nstars = len(self.magfile)
         n_grids = nstars // nstars_grid
         n_leftover_stars = nstars % nstars_grid
+
+        self.n_grids = n_grids
+        self.n_leftover_stars = n_leftover_stars
+
         print(nstars, n_grids, n_leftover_stars)
 
         for i in range(n_grids):
@@ -186,11 +396,15 @@ class ArtificialStars():
 
         return True
 
-    def create_addstar_files(self, Grid, band, magfolder = '.',
-                             addstarfolder = '.',
-                             magfile = 'magfile', addstarfile = 'addstar',
-                             shuffle_mags = True,
-                             remove_previous_files = False):
+    def create_addstar_files(self, 
+                             band : str,
+                             grid_name : str, 
+                             magfolder : str = '.',
+                             addstarfolder : str = '.',
+                             magfile : str = 'magfile', 
+                             addstarfile : str = 'addstar',
+                             shuffle_mags : bool = True,
+                             remove_previous_files : bool = False):
         """ This method creates the addstar files for each grid. This method
         recieves as an input the magfile created by the separate_magfile method
         and the band to be used (H or Ks for HAWK-I fields)
@@ -202,7 +416,7 @@ class ArtificialStars():
         if remove_previous_files:
             os.system('rm %s/%s*' % (addstarfolder, addstarfile))
 
-        hexgrid = Grid
+        hexgrid = self.grid
         #I need to sort the files in the magfolder, because the last file is
         #the one with the leftover stars
 
@@ -220,19 +434,23 @@ class ArtificialStars():
                 #Shuffle the magnitudes
                 if shuffle_mags:
                     df = df.sample(frac=1).reset_index(drop=True)
-                df['x'] = hexgrid.stars_pos[:,0]
-                df['y'] = hexgrid.stars_pos[:,1]
+                print(df.head())
+                df['x'] = hexgrid.stars_pos[grid_name][:,0]
+                df['y'] = hexgrid.stars_pos[grid_name][:,1]
                 df.to_csv(path_to_save, sep = ' ', index = True,
                             float_format='%.3f',
                             columns = ['x', 'y', band])
         
         return True
     
-    def create_fits_artstars(self, path_to_folder, fits_file,
-                             n_file = 0, 
-                             addstarfolder = '.',
-                             addstarfile = '',
-                             phots_per_adu = 1):
+    def create_fits_artstars(self, 
+                             path_to_folder : str, 
+                             fits_file : str,
+                             phots_per_adu: float = 1.0,
+                             n_file : int = 0, 
+                             addstarfolder : str = '.',
+                             addstarfile : str = ''
+                             ):
         """
         This method creates the fits files using the addstar files created
         by the create_addstar_files method. It uses DAOPHOT's addstar command
@@ -258,6 +476,8 @@ class ArtificialStars():
 
         psf_filepath = filepath + '.psf'
         new_filepath = filepath + '_add' + str(n_file) + '.fits'
+        print(filepath, psf_filepath, phots_per_adu, path_to_addstar, \
+               new_filepath)
         cmd_addstar = 'daophot << EOF\n\nat %s\naddstar\n%s\n100\n%1.2f\n%s\n%s\nEOF\n' \
             % (filepath, psf_filepath, phots_per_adu, path_to_addstar, \
                new_filepath)
@@ -266,4 +486,5 @@ class ArtificialStars():
 
         #Return to the original directory
         os.chdir(origin_path)
+        self.list_of_addfits.append(new_filepath)
         return True
