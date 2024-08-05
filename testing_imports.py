@@ -1,11 +1,10 @@
-from grid import Grid, ArtificialStars
-import matplotlib.pyplot as plt
+from grid import Grids, ArtificialStars
 import os
 import re
 
 def main():
     global hexgrid, artstars 
-    hexgrid = Grid(path_to_image='../Data/NPL054/c1/NPL054_Ks_160s_c1.fits')
+    hexgrid = Grids(path_to_image='../Data/NPL054/c1/NPL054_Ks_160s_c1.fits')
     xv, yv =  hexgrid.create_grid(20, 2)
     hexgrid.move_random_1px()
     print('Each grid supports %i stars' % hexgrid.nartstars_pergrid)
