@@ -478,11 +478,17 @@ class ArtificialStars():
         new_filepath = filepath + '_add' + str(n_file) + '.fits'
         print(filepath, psf_filepath, phots_per_adu, path_to_addstar, \
                new_filepath)
-        cmd_addstar = 'daophot << EOF\n\nat %s\naddstar\n%s\n100\n%1.2f\n%s\n%s\nEOF\n' \
+        cmd_addstar = 'daophot << EOF\n\nat %s\naddstar\n%s\n100\n%1.2f\n%s\n%s\n\nEOF\n' \
             % (filepath, psf_filepath, phots_per_adu, path_to_addstar, \
                new_filepath)
         print(cmd_addstar)
         os.system(cmd_addstar)
+
+        #move the file to the path_to_folder
+        if dirpath != path_to_folder:
+            relpath = os.path.relpath(path_to_folder, dirpath)
+            cmd_mv = 'mv %s %s' % (new_filepath, relpath)
+            os.system(cmd_mv)
 
         #Return to the original directory
         os.chdir(origin_path)
