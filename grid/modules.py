@@ -279,7 +279,9 @@ class ArtificialStars():
             self.magfile = self._open_magfile(self.path_to_magfile) 
 
         self.n_grids = None
-        self.n_leftover_stars = None  
+        self.n_leftover_stars = None
+        self.list_of_ind_addfiles = []
+        self.list_of_master_addfiles = []  
         self.list_of_addfits = []
 
     def _open_magfile(self, path_to_magfile):
@@ -290,12 +292,13 @@ class ArtificialStars():
         return df
 
     
-    def random_magnitudes(self, 
+    def random_magnitudes_reference(self, 
                           min_mag : int | float,
                           max_mag : int | float,
                           red_band : str,
                           blue_band : str = None, 
-                          color_range: tuple | list | None = None):
+                          color_range: tuple | list | None = None, 
+                          nstars : int = None):
 
         '''
         This method creates random magnitudes for the stars in the grid. The
@@ -325,8 +328,8 @@ class ArtificialStars():
         '''
         if blue_band is None and color_range is not None:
             raise ValueError('If color_range is not None, blue_band must be defined')
-        
-        nstars = self.grid.nartstars_pergrid
+        if nstars is None:
+            nstars = self.grid.nartstars_pergrid
 
         if color_range is None:
             mags = np.random.uniform(min_mag, max_mag, nstars)
@@ -347,6 +350,104 @@ class ArtificialStars():
             self.magfile.drop('COLOR', axis=1, inplace=True)
 
         return self.magfile
+    
+    def random_magnitudes_other_images(self,
+                                       dict_images : dict,
+                                       real_mags : pd.DataFrame,
+                                       ref_image_key : str,
+                                       band : str,
+                                       min_mag : int | float = None,
+                                       max_mag : int | float = None,
+                                       normal_dist : bool = False):
+        
+        """ 
+        This method creates random magnitudes for the stars in the grid
+        based on the magnitudes of the stars in the reference image. The
+        magnitudes are created based on the real differences of the photometry
+        with the stars of the reference image. The number of stars is equal to
+        the number of stars in the grid 
+        
+        To do so, this method bins the magnitudes of the stars in the reference
+        image and calculates the mean and standard deviation of the magnitude
+        differences. Then, it creates a random magnitude for each star in the
+        grid based on the mean and standard deviation of the magnitude in each 
+        bin. The magnitudes are created with a normal distribution with the
+        mean and standard deviation of the magnitude differences in each bin.
+
+        """
+
+        print('Creating artificial stars for filter %s' % band)
+        for key, image in dict_images.items():
+            if band in key:
+                if key == ref_image_key:
+                    print('--- Image %s is the reference image, skipping' % image)
+                    continue
+                if key not in self.magfile.columns:
+                    print('--- Creating artificial stars for %s' % key)
+                    #Define the variables
+                    real_mag_ref = real_mags[ref_image_key]
+                    real_mag = real_mags[key]
+                    real_mag_diff = real_mag_ref - real_mag
+
+                    #mask really big outliers
+                    mask = (real_mag_diff > -5) & (real_mag_diff < 1)
+                    real_mag_ref = real_mag_ref[mask]
+                    real_mag_diff = real_mag_diff[mask]
+
+                    # bin the real magnitudes of the stars in the ref image.
+                    if min_mag is None:
+                        min_mag = real_mag_ref.min()
+                    if max_mag is None:
+                        max_mag = real_mag_ref.max()
+                    bins = np.arange(min_mag, max_mag, 0.5)
+                    cbins = (bins[:-1] + bins[1:])/2
+                    real_mag_ref_binned = pd.cut(real_mag_ref, bins)
+
+                    #compute the mean and standard deviation of the magnitude
+                    #differences in each bin
+                    if normal_dist:
+                        mean_diff = real_mag_diff.groupby(real_mag_ref_binned).median()
+                        std_diff = real_mag_diff.groupby(real_mag_ref_binned).std()
+                        count = real_mag_diff.groupby(real_mag_ref_binned).count()
+                        #print(mean_diff, std_diff, count)
+
+                        #create the artificial stars sampled from a normal 
+                        #distribution with the mean and standard deviation of the
+                        #magnitude differences in each bin
+                        art_stars_ref = self.magfile[ref_image_key]
+                        art_stars_ref_binned = pd.cut(art_stars_ref, bins)
+
+                        mean_art = art_stars_ref - \
+                                art_stars_ref_binned.map(mean_diff).astype('float64')
+                        std_art = art_stars_ref_binned.map(std_diff)
+
+                        art_stars = np.random.normal(mean_art, std_art.values)
+
+                    else:
+                        mean_diff = real_mag_diff.median()
+                        print(mean_diff)
+                        real_mag_ref = self.magfile[ref_image_key]
+                        art_stars = real_mag_ref - mean_diff
+                    self.magfile[key] = art_stars
+
+                    # # Diagnostic plots
+                    # import matplotlib.pyplot as plt
+                    # plt.plot(real_mag_ref, real_mag_diff, 'o', ms=1,
+                    #          label='Real stars', c='navy')
+                    # plt.plot(art_stars_ref, art_stars_ref - art_stars, 'o', ms=1,
+                    #          label='Artificial stars', c='sienna')
+                    # plt.errorbar(cbins, mean_diff, yerr=std_diff, marker='o', ms=3,
+                    #              label='Mean and std of real stars', c='yellow')
+                    # plt.legend()
+                    # plt.title('Difference in magnitudes between %s and %s' % (ref_image_key, key))
+                    # plt.xlabel('%s' % band)
+                    # plt.ylabel(r'$\Delta$ %s' % band)
+                    # plt.show()
+
+                else:
+                    print('--- Artificial stars for %s already created' % key)
+
+        return real_mag_diff
 
     def separate_magfile(self, 
                          magfolder : str = '.', 
@@ -373,26 +474,34 @@ class ArtificialStars():
         print(nstars, n_grids, n_leftover_stars)
 
         for i in range(n_grids):
-            filename = magfile + '_%i.dat' % (i+1)
+            filename = magfile + '_%i.add' % (i+1)
             path_to_save = os.path.join(magfolder, filename)
-            if i == 0:
-                df = self.magfile.iloc[:nstars_grid]
-                df.to_csv(path_to_save, sep = ' ', index = False,
-                          float_format='%.3f',)
-            else:
-                df = self.magfile.iloc[i*nstars_grid:(i+1)*nstars_grid]
-                df.to_csv(path_to_save, sep = ' ', index = False,
-                          float_format='%.3f',)
-        
-        #This part of the code creates a file with the leftover stars if the 
-        #use_leftover_stars flag is True
+            
+            # Adjust the index to be unique across all grids
+            start_idx = i * nstars_grid
+            end_idx = start_idx + nstars_grid
+            
+            df = self.magfile.iloc[start_idx:end_idx]
+            df.index = range(start_idx + 1, end_idx + 1)  # Create a unique index
+            
+            df.to_csv(path_to_save, sep=' ', index=True, index_label="id", 
+                      float_format='%.3f')
+            self.list_of_master_addfiles.append(path_to_save)
 
+        # For leftover stars
         if use_leftover_stars:
-            filename = magfile + '_%i.dat' % (n_grids+1)
+            filename = magfile + '_%i.add' % (n_grids + 1)
             path_to_save = os.path.join(magfolder, filename)
+            
+            start_idx = n_grids * nstars_grid
+            end_idx = start_idx + n_leftover_stars
+            
             df = self.magfile.iloc[-n_leftover_stars:]
-            df.to_csv(path_to_save, sep = ' ', index = False,
-                                float_format='%.3f',)
+            df.index = range(start_idx + 1, end_idx + 1)  # Continue unique index
+            
+            df.to_csv(path_to_save, sep=' ', index=True, index_label="id", 
+                      float_format='%.3f')
+            self.list_of_master_addfiles.append(path_to_save)
 
         return True
 
@@ -405,6 +514,7 @@ class ArtificialStars():
                              addstarfile : str = 'addstar',
                              shuffle_mags : bool = True,
                              remove_previous_files : bool = False):
+        
         """ This method creates the addstar files for each grid. This method
         recieves as an input the magfile created by the separate_magfile method
         and the band to be used (H or Ks for HAWK-I fields)
@@ -412,6 +522,11 @@ class ArtificialStars():
         This method creates a file for each grid, with the positions and
         magnitudes of the stars in the grid. It reads each file in the magfolder
         and assigns a magnitude to each position.
+
+        It also inherits the ID of the stars from the magfile, so the ID of the
+        stars in the addstar files are the same as the ID of the stars in the
+        magfile. This is important to merge the positions and magnitudes in the
+        next steps of the completeness
         """
         if remove_previous_files:
             os.system('rm %s/%s*' % (addstarfolder, addstarfile))
@@ -425,21 +540,30 @@ class ArtificialStars():
         for file in magfiles_list:
             if file.startswith(magfile):
                 path_to_open = os.path.join(magfolder, file)
-                filename = file.replace(magfile, addstarfile)
-                #add the band to the filename
-                filename = filename.replace('.dat', '_%s.dat' % band)
-                path_to_save = os.path.join(addstarfolder, filename)
                 df = pd.read_csv(path_to_open, delim_whitespace = True)
+
+                #add the band to the filename
+                filename = file.replace(magfile, addstarfile)
+                filename = filename.replace('.add', '_%s.add' % band)
+                path_to_save = os.path.join(addstarfolder, filename)
+
+                #Store the path to the addstar files
+                self.list_of_ind_addfiles.append(path_to_save)
 
                 #Shuffle the magnitudes
                 if shuffle_mags:
                     df = df.sample(frac=1).reset_index(drop=True)
-                print(df.head())
+                    #For now NOT USE, it is not working properly
+                    ...
+
                 df['x'] = hexgrid.stars_pos[grid_name][:,0]
                 df['y'] = hexgrid.stars_pos[grid_name][:,1]
-                df.to_csv(path_to_save, sep = ' ', index = True,
+                df.to_csv(path_to_save, sep = ' ', 
+                            index = False,
                             float_format='%.3f',
-                            columns = ['x', 'y', band])
+                            columns = ['id', 'x', 'y', band],
+                            )
+                print(df.head())
         
         return True
     
@@ -447,7 +571,7 @@ class ArtificialStars():
                              path_to_folder : str, 
                              fits_file : str,
                              phots_per_adu: float = 1.0,
-                             n_file : int = 0, 
+                             n_file : int = 1, 
                              addstarfolder : str = '.',
                              addstarfile : str = ''
                              ):
