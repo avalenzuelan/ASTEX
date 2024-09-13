@@ -506,12 +506,12 @@ class ArtificialStars():
         return True
 
     def create_addstar_files(self, 
-                             band : str,
-                             grid_name : str, 
+                             list_of_images : list | dict, 
                              magfolder : str = '.',
                              addstarfolder : str = '.',
                              magfile : str = 'magfile', 
                              addstarfile : str = 'addstar',
+                             random_1px : bool = True,
                              shuffle_mags : bool = True,
                              remove_previous_files : bool = False):
         
@@ -537,34 +537,47 @@ class ArtificialStars():
 
         magfiles_list = os.listdir(magfolder)
         magfiles_list.sort(key=lambda s: int(re.search(r'\d+', s).group()))
+        
         for file in magfiles_list:
             if file.startswith(magfile):
+                print(magfile, file)
                 path_to_open = os.path.join(magfolder, file)
                 df = pd.read_csv(path_to_open, delim_whitespace = True)
+                #move randomly the positions of the stars in the reference image
+                if random_1px:
+                    print('--- Moving the stars randomly in the grid')
+                    hexgrid.move_random_1px()
 
-                #add the band to the filename
-                filename = file.replace(magfile, addstarfile)
-                filename = filename.replace('.add', '_%s.add' % band)
-                path_to_save = os.path.join(addstarfolder, filename)
+                for key, image in list_of_images.items():
+                    if key in df.columns:
+                        
+                        if random_1px:
+                            print('--- Transforming coordinates to %s' % image)
+                            hexgrid.transform_to(image)
+                        
+                        #add the band to the filename
+                        filename = file.replace(magfile, addstarfile)
+                        filename = filename.replace('.add', '_%s.add' % key)
+                        path_to_save = os.path.join(addstarfolder, filename)
 
-                #Store the path to the addstar files
-                self.list_of_ind_addfiles.append(path_to_save)
+                        #Store the path to the addstar files
+                        self.list_of_ind_addfiles.append(path_to_save)
 
-                #Shuffle the magnitudes
-                if shuffle_mags:
-                    df = df.sample(frac=1).reset_index(drop=True)
-                    #For now NOT USE, it is not working properly
-                    ...
+                        #Shuffle the magnitudes
+                        if shuffle_mags:
+                            df = df.sample(frac=1).reset_index(drop=True)
+                            #For now NOT USE, it is not working properly
+                            ...
 
-                df['x'] = hexgrid.stars_pos[grid_name][:,0]
-                df['y'] = hexgrid.stars_pos[grid_name][:,1]
-                df.to_csv(path_to_save, sep = ' ', 
-                            index = False,
-                            float_format='%.3f',
-                            columns = ['id', 'x', 'y', band],
-                            )
-                print(df.head())
-        
+                        print('Creating the addstar file for %s' % filename)
+                        df['x'] = hexgrid.stars_pos[image][:,0]
+                        df['y'] = hexgrid.stars_pos[image][:,1]
+                        df.to_csv(path_to_save, sep = ' ', 
+                                    index = False,
+                                    float_format='%.3f',
+                                    columns = ['id', 'x', 'y', key],
+                                    )
+                        print(df.head())        
         return True
     
     def create_fits_artstars(self, 
